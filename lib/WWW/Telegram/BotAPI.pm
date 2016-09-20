@@ -8,13 +8,13 @@ use JSON::MaybeXS ();
 use constant DEBUG => $ENV{TELEGRAM_BOTAPI_DEBUG} || 0;
 
 our $VERSION = "0.07";
-my $json; # for debugging purposes, only defined when DEBUG = 1
+my $json = JSON::MaybeXS->new(utf8 => 0); # for debugging purposes, only defined when DEBUG = 1
 
 BEGIN {
     eval "require Mojo::UserAgent; 1" or
         eval "require LWP::UserAgent; 1" or
         die "Either Mojo::UserAgent or LWP::UserAgent is required.\n$@";
-    $json = JSON::MaybeXS->new (pretty => 1, utf8 => 1) if DEBUG;
+    $json = JSON::MaybeXS->new (pretty => 1, utf8 => 0) if DEBUG;
 }
 
 # Debugging functions (only used when DEBUG is true)
@@ -118,7 +118,7 @@ sub api_request
             # Ensure we pass octets to LWP with multipart/form-data and that we deal only with
             # references.
             ($is_lwp
-                ? $has_file_upload ? $postdata->{$k} = Encode::encode ("utf-8", $postdata->{$k})
+                ? $has_file_upload ? $postdata->{$k} = Encode::encode ("utf8", $postdata->{$k})
                                    : push @utf8_keys, $k
                 : ()), next unless my $ref = ref $postdata->{$k};
             # Process file uploads.
@@ -152,7 +152,7 @@ sub api_request
             }
             else
             {
-                $postdata->{$k} = JSON::MaybeXS::encode_json $postdata->{$k}, next
+                $postdata->{$k} = $json->encode($postdata->{$k}), next
                     if $has_file_upload;
                 push @fixable_keys, $k;
             }
@@ -160,7 +160,7 @@ sub api_request
         if ($has_file_upload)
         {
             # Fix keys found before the file upload.
-            $postdata->{$_} = JSON::MaybeXS::encode_json $postdata->{$_} for @fixable_keys;
+            $postdata->{$_} = $json->encode($postdata->{$_}) for @fixable_keys;
             $postdata->{$_} = Encode::encode ("utf-8", $postdata->{$_})  for @utf8_keys;
             $is_lwp
                 and push @request, Content      => $postdata,
@@ -169,10 +169,11 @@ sub api_request
         }
         else
         {
+            my $content =  $json->encode($postdata);
             $is_lwp
                 and push @request, DEBUG ? (DBG => $postdata) : (), # handled in _fix_request_args
-                                   Content      => JSON::MaybeXS::encode_json $postdata,
-                                   Content_Type => "application/json"
+                                   Content      => $content,
+                                   Content_Type => "application/json;charset=utf-8"
                 or  push @request, json         => $postdata;
         }
     }
@@ -192,7 +193,7 @@ sub api_request
     return $tx if $async_cb;
     # Pre-decode the response to provide, if possible, an error message.
     my $response = $is_lwp ?
-        eval { JSON::MaybeXS::decode_json ($tx->decoded_content) } || undef :
+        eval { $json->decode($tx->decoded_content) } || undef :
         $tx->res->json;
     # Dump it in debug mode.
     DEBUG and _ddump RESPONSE => $response;
